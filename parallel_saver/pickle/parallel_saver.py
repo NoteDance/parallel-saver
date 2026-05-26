@@ -43,6 +43,9 @@ class ParallelSaver:
         output_file.close()
         shm.close()
     
+    def align_to_64(self, size_in_bytes):
+        return (size_in_bytes + 63) & ~63
+    
     def save(self, path):
         counter = 0
         current_offset = 0
@@ -53,7 +56,7 @@ class ParallelSaver:
             index = self.index[i]
             shm = self.active_shms[i]
             shm_metadata = (shm.name, data.shape, data.dtype, current_offset)
-            current_offset += data.nbytes
+            current_offset += self.align_to_64(data.nbytes)
             pool.apply_async(self.parallel_dump, args=(shm_metadata, index, path, counter))
         pool.close()
         pool.join()

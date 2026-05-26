@@ -15,10 +15,6 @@ def parallel_load(self, shm_name, metadata, path, counter):
     input_file.close()
 
 
-def align_to_64(size_in_bytes):
-    return (size_in_bytes + 63) & ~63
-
-
 def restore(path):
     path = Path(path)
     pattern = "data_index*"
@@ -32,7 +28,7 @@ def restore(path):
         input_file = open(os.path.join(path, f"data_metadata_{counter}.dat"), 'rb')
         metadata = pickle.load(input_file)
         metadata_list.append(metadata)
-        aligned_nbytes = align_to_64(metadata[2])
+        aligned_nbytes = metadata[2]
         total_size += aligned_nbytes
         input_file.close()
     large_shm = shared_memory.SharedMemory(create=True, size=total_size)
