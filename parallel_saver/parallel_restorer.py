@@ -1,13 +1,22 @@
+import numpy as np
 import multiprocessing as mp
+from multiprocessing import shared_memory
 from pathlib import Path
 import pickle
 import os
 
 
-def parallel_load(data_list, index, path, counter):
-    input_file=open(os.path.join(path, f"data_{counter}.dat"),'rb')
-    data_list[index]=pickle.load(input_file)
+def parallel_load(self, shm_name, metadata, path, counter):
+    input_file=open(os.path.join(path,f"data_{counter}.dat"),'rb')
+    existing_shm = shared_memory.SharedMemory(name=shm_name)
+    shared_array = np.ndarray(metadata[0], dtype=metadata[1], buffer=existing_shm.buf, offset=metadata[2])
+    shared_array[:] = pickle.load(input_file)[:]
+    existing_shm.close()
     input_file.close()
+
+
+def align_to_64(size_in_bytes):
+    return (size_in_bytes + 63) & ~63
 
 
 def restore(path):
@@ -15,19 +24,39 @@ def restore(path):
     pattern = "data_index*"
     matching_files = [f for f in path.glob(pattern) if f.is_file()]
     count = len(matching_files)
-    manager = mp.Manager()
-    data_list = manager.list()
+    metadata_list = []
     counter = 0
+    total_size = 0
     for i in range(count):
-        data_list.append(None)
-    process_list = []
+        counter += 1
+        input_file = open(os.path.join(path, f"data_metadata_{counter}.dat"), 'rb')
+        metadata = pickle.load(input_file)
+        metadata_list.append(metadata)
+        aligned_nbytes = align_to_64(metadata[2])
+        total_size += aligned_nbytes
+        input_file.close()
+    large_shm = shared_memory.SharedMemory(create=True, size=total_size)
+    data_dict = {}
+    index_list = []
+    counter = 0
+    pool = mp.Pool(processes=os.cpu_count())
     for i in range(count):
         counter += 1
         input_file = open(os.path.join(path, f"data_index_{counter}.dat"), 'rb')
         index = pickle.load(input_file)
-        process = mp.Process(target=parallel_load, args=(data_list, index, path, counter))
-        process.start()
-        process_list.append(process)
+        index_list.append(index)
+        metadata = metadata_list[counter]
+        pool.apply_async(parallel_load, args=(large_shm.name, metadata, path, counter))
         input_file.close()
-    for process in process_list:
-        process.join()
+    pool.close()
+    pool.join()
+    counter = 0
+    for i in range(count):
+        counter += 1
+        metadata = metadata_list[counter]
+        shm_arr = np.ndarray(metadata[0], dtype=metadata[1], buffer=large_shm.buf, offset=metadata[2])
+        index = index_list[counter]
+        data_dict[index] = shm_arr.copy()
+    large_shm.close()
+    large_shm.unlink()
+    return data_dict
